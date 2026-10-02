@@ -1,0 +1,71 @@
+name: Publish staged release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "release-staging/**"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Read release metadata
+        id: release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(tr -d '\r\n' < release-staging/VERSION)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists." >&2
+            exit 1
+          fi
+
+          gh release create "$TAG" \
+            release-staging/lesta_replays_upload.zip \
+            release-staging/ru.lesta-replays.upload_55.mtmod \
+            --target "${GITHUB_SHA}" \
+            --title "Lesta Replays Mod ${VERSION}" \
+            --notes-file release-staging/RELEASE_NOTES.md \
+            --latest
+
+      - name: Remove staging files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf release-staging
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A release-staging
+
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          git commit -m "Remove release staging files [skip ci]"
+          git push
